@@ -56,16 +56,26 @@ offU = (N+1)*nx
 idxT = offU + N*nu
 
 for k in range(N+1):
-    lbx[offX + k*nx + 0] = 0.0   # px min
-    ubx[offX + k*nx + 0] = 10.0  # px max
-    lbx[offX + k*nx + 1] = 0.0   # py min
-    ubx[offX + k*nx + 1] = 10.0  # py max
-u_max = 2.0
+    lbx[offX + k*nx + 0] = -xlim   # px min
+    ubx[offX + k*nx + 0] =  xlim  # px max
+    lbx[offX + k*nx + 1] = -xlim   # py min
+    ubx[offX + k*nx + 1] =  xlim  # py max
+
+offX = 0
+offU = (N+1)*nx
+idxT = offU + N*nu
+
+for k in range(N+1):
+    lbx[offX + k*nx + 2] = -vlim  # vx
+    ubx[offX + k*nx + 2] =  vlim
+    lbx[offX + k*nx + 3] = -vlim  # vy
+    ubx[offX + k*nx + 3] =  vlim
+
 for k in range(N):
     for j in range(nu):
         idx = offU + k*nu + j
-        lbx[idx] = -u_max
-        ubx[idx] =  u_max
+        lbx[idx] = -ulim
+        ubx[idx] =  ulim
 
 T_min, T_max = 1e-2, 100.0
 lbx[idxT], ubx[idxT] = T_min, T_max

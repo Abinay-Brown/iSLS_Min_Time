@@ -10,28 +10,54 @@ class SLS_optimizer:
 
         return
 
-    def initParameters(self, Xnom, Unom):
-        Amat, Bmat, Zmat = self.Linearize(Xnom, Unom)
-        self.Ablk = cp.Parameter((N * nx, N * nx))
-        self.Bblk = cp.Parameter((N * nx, N * nu))
-        self.Zblk = cp.Parameter((N * nx, N * nx))
-        self.Iblk = cp.Parameter((N * nx, N * nx))
+    def initParameters(self):
+        self.z = cp.Parameter((nx, N))
+        self.v = cp.Parameter((nu, N))
 
+        self.Ablk = cp.Parameter((N * nx, N * nx))  # A Block Matrix
+        self.Bblk = cp.Parameter((N * nx, N * nu))  # B Block Matrix 
+        self.Zblk = cp.Parameter((N * nx, N * nx))  # Z Block Matrix
+        self.Iblk = cp.Parameter((N * nx, N * nx))  # I Block Matrix
+        
+        self.E    = cp.Parameter((nx, nx))          # Exogenous Disturbance Diagonal Matrix
+        self.mu   = cp.Parameter((nx, nx))          # Linearization Error Diagonal Matrix
+        
+        self.cx   = cp.Parameter((nx, nx))
+        self.cu   = cp.Parameter((nu, nu))
+        
+        self.bx   = cp.Parameter((nx, 2))
+        self.bu   = cp.Parameter((nu, 2)) 
+        return True
+
+    def setParameters(self, Xnom, Unom, Tnom, mu):
+        
+        # Set Nominal Trajectory
+        self.z.value = Xnom
+        self.v.value = Unom
+        
+        # Set Block Matrices
+        Amat, Bmat, Zmat = self.Linearize(Xnom, Unom, Tnom)
         self.Ablk.value = Amat
         self.Bblk.value = Bmat
         self.Zblk.value = Zmat
         self.Iblk.value = np.eye((N * nx))
-
-        # Need to setup E matrix
-        # Need to setup mu: for that solve hessian maximization problem
-        # Need to setup c to select elements
-        # Need to setup b for bounds
-        return True
-
-    def initDecisionVariables(self):
-        self.z = cp.Variable((nx, N))
-        self.v = cp.Variable((nu, N))
         
+        # Set Disturbance Matrices
+        self.E.value = Exo
+        self.mu.value = mu
+
+        # Set c select
+        self.cx.value = np.eye(nx)
+        self.cu.value = np.eye(nu)
+        
+        # Set b for bounds
+        self.bx.value = np.array([[xlim, -xlim], [xlim, -xlim], [vlim, -vlim], [vlim, -vlim]])
+        self.bu.value = np.array([[ulim, -ulim], [ulim, -ulim], [ulim, -ulim]])
+        
+        return True
+    def initDecisionVariables(self):
+        #self.z = cp.Variable((nx, N))
+        #self.v = cp.Variable((nu, N))
         self.Phi_x = cp.Variable((N * nx, N * nx))
         self.Phi_u = cp.Variable((N * nu, N * nx))
         self.tau   = cp.Variable((N)) # Double check the dimension if N + 1
@@ -40,8 +66,6 @@ class SLS_optimizer:
     def initConstraints(self):
         self.Constraints = []
         # Boundary Conditions
-        # Dynamics Constraints
-        # Control limits
         
         # Phi_x & Phi_u upper diagonal constraint
         for i_blk in range(N):        
@@ -53,15 +77,61 @@ class SLS_optimizer:
                     
         # [I - ZA - ZB]*Phi = [I] Constraint
         Phi = cp.vstack([self.Phi_x, self.Phi_u])
-        self.Constraints += [(self.Iblk - self.Zblk@self.Ablk - self.Zblk@self.Bblk)@phi == self.Iblk]
-        # 27d constraint 
+        self.Constraints += [(self.Iblk - self.Zblk@self.Ablk - self.Zblk@self.Bblk)@Phi == self.Iblk]
+        
+        # State Tube Constraint
+        # Loop through the Trajectory points
+        for i in range(NUM):
+            # Loop through each state
+            for j in range(nx):
+                # Loop to index block matrices
+                LHS_upper = 0
+                LHS_lower = 0
+                for k in range(i+1):
+                    LHS_upper = LHS_upper + cp.norm(self.cx[j, :]@Phi_x[i*nx: (i+1)*nx, k*nx: (k+1)*nx]@cp.hstack(self.E, self.mu*self.tau[k]**2), 'inf')
+                    LHS_lower = LHS_lower + cp.norm(-self.cx[j, :]@Phi_x[i*nx: (i+1)*nx, k*nx: (k+1)*nx]@cp.hstack(self.E, self.mu*self.tau[k]**2), 'inf')               
+                # Set Upper Tube Bound
+                LHS_upper = LHS_upper + self.cx[j, :]@self.z[:, i] + self.bx[j, 0]
+                # Set Lower Tube Bound  
+                LHS_lower = LHS_lower - self.cx[j, :]@self.z[:, i] + self.bx[j, 1]
+                self.Constraints += [LHS_upper <= 0]
+                self.Constraints += [LHS_lower <= 0]
+
+        # Control Tube Contraint
+        # Loop through the Trajectory points
+        for i in range(NUM):
+            # Loop through each state
+            for j in range(nu):
+                # Loop to index block matrices
+                LHS_upper = 0
+                LHS_lower = 0
+                for k in range(i+1):
+                    LHS_upper = LHS_upper + cp.norm(self.cu[j, :]@Phi_u[i*nu: (i+1)*nu, k*nx: (k+1)*nx]@cp.hstack(self.E, self.mu*self.tau[k]**2), 'inf')
+                    LHS_lower = LHS_lower + cp.norm(-self.cu[j, :]@Phi_u[i*nu: (i+1)*nu, k*nx: (k+1)*nx]@cp.hstack(self.E, self.mu*self.tau[k]**2), 'inf')               
+                # Set Upper Tube Bound
+                LHS_upper = LHS_upper + self.cu[j, :]@self.v[:, i] + self.bu[j, 0]
+                # Set Lower Tube Bound  
+                LHS_lower = LHS_lower - self.cu[j, :]@self.v[:, i] + self.bu[j, 1]
+                self.Constraints += [LHS_upper <= 0]
+                self.Constraints += [LHS_lower <= 0]
+
         # 27e constraint
+        for i in range(1, NUM):
+            LHS = 0
+            for k in range(i):
+                LHS = LHS + cp.norm(Phi_x[(i-1)*nx: i*nx, k*nx: (k+1)*nx]@cp.hstack(self.E, self.mu*self.tau[k]**2), 'inf')               
+            self.Constraints += [LHS_upper <= self.tau[i]]
+        
+        for i in range(1, NUM):
+            LHS = 0
+            for k in range(i):
+                LHS = LHS + cp.norm(Phi_u[(i-1)*nu: i*nu, k*nx: (k+1)*nx]@cp.hstack(self.E, self.mu*self.tau[k]**2), 'inf')               
+            self.Constraints += [LHS <= self.tau[i]]
             
         return
-    
-    def updateParameters(self):
-        
-        return True 
+    def computeLinearizationError():
+        mu = 0
+        return mu
 
     def Linearize(self, Xnom, Unom, Tnom):
         Ablk = np.zeros((N * nx, N * nx))
