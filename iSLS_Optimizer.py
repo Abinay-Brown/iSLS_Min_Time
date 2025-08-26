@@ -22,14 +22,14 @@ class SLS_optimizer:
         self.Rblk = cp.Parameter((N * nu, N * nu))  # Control Weight Block Matrix
 
         self.E    = cp.Parameter((nx, nx))          # Exogenous Disturbance Diagonal Matrix
-        self.mu   = cp.Parameter((nx, nx))          # Linearization Error Diagonal Matrix
+        #self.mu   = cp.Parameter((nx, nx))          # Linearization Error Diagonal Matrix
         
         self.cx   = cp.Parameter((nx, nx))
         self.cu   = cp.Parameter((nu, nu))
         
         self.bx   = cp.Parameter((nx, 2))
         self.bu   = cp.Parameter((nu, 2))
-        self.tau   = cp.Parameter((N)) # Double check the dimension if N + 1
+        #self.tau   = cp.Parameter((N)) # Double check the dimension if N + 1
          
         return True
 
@@ -50,7 +50,7 @@ class SLS_optimizer:
 
         # Set Disturbance Matrices
         self.E.value = Exo
-        self.mu.value = mu
+        #self.mu.value = mu
 
         # Set c select
         self.cx.value = np.eye(nx)
@@ -59,7 +59,7 @@ class SLS_optimizer:
         # Set b for bounds
         self.bx.value = np.array([[xlim, -xlim], [xlim, -xlim], [vlim, -vlim], [vlim, -vlim]])
         self.bu.value = np.array([[ulim, -ulim], [ulim, -ulim]])
-        self.tau.value = np.zeros((N))
+        #self.tau.value = np.zeros((N))
         return True
     def initDecisionVariables(self):
         #self.z = cp.Variable((nx, N))
@@ -97,8 +97,8 @@ class SLS_optimizer:
                 LHS_upper = 0
                 LHS_lower = 0
                 for k in range(i+1):
-                    LHS_upper = LHS_upper + cp.norm(self.cx[j, :]@self.Phi_x[i*nx: (i+1)*nx, k*nx: (k+1)*nx]@cp.hstack([self.E, self.mu*self.tau[k]**2]), 'inf')
-                    LHS_lower = LHS_lower + cp.norm(-self.cx[j, :]@self.Phi_x[i*nx: (i+1)*nx, k*nx: (k+1)*nx]@cp.hstack([self.E, self.mu*self.tau[k]**2]), 'inf')               
+                    LHS_upper = LHS_upper + cp.norm(self.cx[j, :]@self.Phi_x[i*nx: (i+1)*nx, k*nx: (k+1)*nx]@self.E, 'inf')
+                    #LHS_lower = LHS_lower + cp.norm(-self.cx[j, :]@self.Phi_x[i*nx: (i+1)*nx, k*nx: (k+1)*nx]@self.E, 'inf')               
                 # Set Upper Tube Bound
                 LHS_upper = LHS_upper + self.cx[j, :]@self.z[:, i] - self.bx[j, 0]     
                 # Set Lower Tube Bound  
@@ -115,17 +115,17 @@ class SLS_optimizer:
                 LHS_upper = 0
                 LHS_lower = 0
                 for k in range(i+1):
-                    LHS_upper = LHS_upper + cp.norm(self.cu[j, :]@self.Phi_u[i*nu: (i+1)*nu, k*nx: (k+1)*nx]@cp.hstack([self.E, self.mu*self.tau[k]**2]), 'inf')
-                    LHS_lower = LHS_lower + cp.norm(-self.cu[j, :]@self.Phi_u[i*nu: (i+1)*nu, k*nx: (k+1)*nx]@cp.hstack([self.E, self.mu*self.tau[k]**2]), 'inf')               
+                    LHS_upper = LHS_upper + cp.norm(self.cu[j, :]@self.Phi_u[i*nu: (i+1)*nu, k*nx: (k+1)*nx]@self.E, 'inf')
+                    LHS_lower = LHS_lower + cp.norm(-self.cu[j, :]@self.Phi_u[i*nu: (i+1)*nu, k*nx: (k+1)*nx]@self.E, 'inf')               
                 # Set Upper Tube Bound
                 LHS_upper = LHS_upper + self.cu[j, :]@self.v[:, i] - self.bu[j, 0]
                 # Set Lower Tube Bound  
                 LHS_lower = LHS_lower - self.cu[j, :]@self.v[:, i] + self.bu[j, 1] # Check if it is -bu !!!!!!!!!!!!!!!!!
                 self.Constraints += [LHS_upper <= 0]
                 self.Constraints += [LHS_lower <= 0]
-        
-        # 27e constraint
         '''
+        # 27e constraint
+        
         for i in range(1, N):
             LHS = 0
             for k in range(i):
@@ -139,25 +139,27 @@ class SLS_optimizer:
             self.Constraints += [LHS <= self.tau[i]]
         '''    
         return True
+
     def solve_iSLS(self):
         cost = 0
 
         for i in range(1, N):
             sub = 0
             for k in range(i):
-                sub = sub + self.Phi_x[(i-1)*nx: i*nx, k*nx: (k+1)*nx]@cp.hstack([self.E, self.mu*self.tau[k]**2])               
+                sub = sub + self.Phi_x[(i-1)*nx: i*nx, k*nx: (k+1)*nx]@self.E               
             cost = cost + cp.norm(self.Qblk[(i-1)*nx: i*nx, (i-1)*nx: i*nx]@sub, 'fro')
         
         for i in range(1, N):
             sub = 0
             for k in range(i):
-                sub = sub + self.Phi_u[(i-1)*nu: i*nu, k*nx: (k+1)*nx]@cp.hstack([self.E, self.mu*self.tau[k]**2])               
+                sub = sub + self.Phi_u[(i-1)*nu: i*nu, k*nx: (k+1)*nx]@self.E               
             cost = cost + cp.norm(self.Rblk[(i-1)*nu: i*nu, (i-1)*nu: i*nu]@sub, 'fro')
         
+        self.Phi_x.value = np.zeros((N * nx, N * nx))
+        self.Phi_u.value = np.zeros((N * nu, N * nx))
         prob = cp.Problem(cp.Minimize(cost), self.Constraints)
-        prob.solve(solver=cp.CLARABEL, verbose=True,
-           max_iter=5000, tol_gap_abs=1e-7, tol_gap_rel=1e-7,
-           warm_start=True)
+        prob.solve(solver=cp.ECOS, verbose=True,
+           max_iters=5000, warm_start=True)
         return True
     def computeLinearizationError(self):
         mu = 0
