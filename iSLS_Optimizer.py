@@ -157,10 +157,20 @@ class SLS_optimizer:
         
         self.Phi_x.value = np.zeros((N * nx, N * nx))
         self.Phi_u.value = np.zeros((N * nu, N * nx))
+
         prob = cp.Problem(cp.Minimize(cost), self.Constraints)
-        prob.solve(solver=cp.ECOS, verbose=True,
-           max_iters=5000, warm_start=True)
-        return True
+        prob.solve(solver=cp.ECOS, verbose=True, max_iters=5000, warm_start=True)
+        
+        if prob.status not in ("optimal", "optimal_inaccurate"):
+            raise RuntimeError(f"Solve failed: {prob.status}")
+        Phi_x_sol = np.array(self.Phi_x.value, dtype=float)
+        Phi_u_sol = np.array(self.Phi_u.value, dtype=float)
+        
+        return Phi_x_sol, Phi_u_sol
+    
+    def plot_solution(self):
+        
+        return
     def computeLinearizationError(self):
         mu = 0
         return mu
